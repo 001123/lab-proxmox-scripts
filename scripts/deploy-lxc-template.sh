@@ -53,6 +53,9 @@ CORES="2"
 MEMORY="2048"
 DISK_SIZE="15"
 FORCE=0
+INSTALL_DOCKER=1
+INSTALL_MISE=1
+NODE_VERSION="lts"
 
 # Detect Mac SSH Public Key
 DEFAULT_PUB_KEY=""
@@ -77,7 +80,7 @@ print_usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Script chạy từ máy Mac để tự động triển khai LXC Template Debian 12 (Docker Ready) trên Proxmox VE.
+Script chạy từ máy Mac để tự động triển khai LXC Template Debian 12 (Docker & Mise/Node Ready) trên Proxmox VE.
 
 Options:
   -h, --host <IP|HOST>     Địa chỉ IP Proxmox VE (Mặc định từ credentials.env: ${PVE_IP})
@@ -91,12 +94,16 @@ Options:
   -s, --storage <STORAGE>  Storage pool cho rootfs (Mặc định: ${PVE_STORAGE})
   -b, --bridge <BRIDGE>    Bridge mạng (Mặc định: ${PVE_BRIDGE})
   -k, --ssh-key <PATH>     Đường dẫn SSH public key của Mac (Mặc định: ${SSH_KEY_FILE})
+  --no-docker              Bỏ qua bước cài đặt Docker CE
+  --no-mise                Bỏ qua bước cài đặt Mise và Node.js
+  --node-version <VER>     Phiên bản Node.js cần cài qua mise (Mặc định: lts)
   -f, --force              Ghi đè/xoá nếu CT ID đã tồn tại
   --help                   Hiển thị hướng dẫn này
 
 Ví dụ:
   ./$(basename "$0") --force
   ./$(basename "$0") --force -i 9000 --hostname lxc-debian
+  ./$(basename "$0") --force --node-version 22
   ./$(basename "$0") --host 192.168.250.4 --ssh-key ~/.ssh/id_ed25519.pub
 
 EOF
@@ -149,6 +156,18 @@ while [[ $# -gt 0 ]]; do
             SSH_KEY_FILE="$2"
             shift 2
             ;;
+        --no-docker)
+            INSTALL_DOCKER=0
+            shift
+            ;;
+        --no-mise)
+            INSTALL_MISE=0
+            shift
+            ;;
+        --node-version)
+            NODE_VERSION="$2"
+            shift 2
+            ;;
         -f|--force)
             FORCE=1
             shift
@@ -182,7 +201,7 @@ REMOTE_TMP_DIR="/tmp/pve-template-deploy-$$"
 
 echo ""
 echo -e "${CYAN}==============================================================${NC}"
-echo -e "${CYAN}       TRIỂN KHAI LXC TEMPLATE (DOCKER) TỪ MÁY MAC            ${NC}"
+echo -e "${CYAN}   TRIỂN KHAI LXC TEMPLATE (DOCKER & NODE/MISE) TỪ MÁY MAC   ${NC}"
 echo -e "${CYAN}==============================================================${NC}"
 printf "%-22s : %s\n" "Proxmox Host" "${PVE_USER}@${PVE_IP}:${PVE_SSH_PORT}"
 printf "%-22s : %s (%s)\n" "Template ID / Name" "$CT_ID" "$HOSTNAME"
@@ -190,6 +209,8 @@ printf "%-22s : %s vCPU | %s MB RAM | %s GB Disk\n" "Cấu hình" "$CORES" "$MEM
 printf "%-22s : %s\n" "Mac SSH Public Key" "$SSH_KEY_FILE"
 printf "%-22s : %s\n" "Target Storage" "$PVE_STORAGE"
 printf "%-22s : %s\n" "Network Bridge" "$PVE_BRIDGE"
+printf "%-22s : %s\n" "Cài sẵn Docker CE" "$([[ $INSTALL_DOCKER -eq 1 ]] && echo 'CÓ (Docker CE + Compose)' || echo 'KHÔNG')"
+printf "%-22s : %s\n" "Cài sẵn Mise & Node" "$([[ $INSTALL_MISE -eq 1 ]] && echo "CÓ (Node.js ${NODE_VERSION} + pnpm + yarn)" || echo 'KHÔNG')"
 printf "%-22s : %s\n" "Ghi đè nếu có (--force)" "$([[ $FORCE -eq 1 ]] && echo 'CÓ' || echo 'KHÔNG')"
 echo -e "${CYAN}==============================================================${NC}"
 echo ""
@@ -208,7 +229,16 @@ log_info "2. Đang khởi chạy quá trình tạo template trực tiếp trên 
 
 EXTRA_ARGS=""
 if [[ "$FORCE" -eq 1 ]]; then
-    EXTRA_ARGS="--force"
+    EXTRA_ARGS="${EXTRA_ARGS} --force"
+fi
+if [[ "$INSTALL_DOCKER" -eq 0 ]]; then
+    EXTRA_ARGS="${EXTRA_ARGS} --no-docker"
+fi
+if [[ "$INSTALL_MISE" -eq 0 ]]; then
+    EXTRA_ARGS="${EXTRA_ARGS} --no-mise"
+fi
+if [[ -n "$NODE_VERSION" && "$NODE_VERSION" != "lts" ]]; then
+    EXTRA_ARGS="${EXTRA_ARGS} --node-version '${NODE_VERSION}'"
 fi
 
 ssh -p "$PVE_SSH_PORT" "${PVE_USER}@${PVE_IP}" \

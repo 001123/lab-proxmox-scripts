@@ -30,6 +30,8 @@ HOSTNAME="${HOSTNAME:-lxc-debian}"
 SSH_KEY_FILE="${SSH_KEY_FILE:-}"
 FORCE="${FORCE:-0}"
 INSTALL_DOCKER="${INSTALL_DOCKER:-1}"
+INSTALL_MISE="${INSTALL_MISE:-1}"
+NODE_VERSION="${NODE_VERSION:-lts}"
 
 # --- Helper Functions ---
 log_info() {
@@ -52,7 +54,7 @@ print_usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Tự động tạo LXC Container Template Debian 12 tích hợp Docker CE trên Proxmox VE.
+Tự động tạo LXC Container Template Debian 12 tích hợp Docker CE, Mise & Node.js LTS trên Proxmox VE.
 
 Options:
   -i, --id <ID>           Container ID (Mặc định: 9000)
@@ -67,12 +69,15 @@ Options:
   -d, --disk <GB>         Dung lượng ổ đĩa GB (Mặc định: 15)
   -n, --hostname <NAME>   Hostname cho container (Mặc định: lxc-debian)
   --no-docker             Bỏ qua bước cài đặt Docker CE
+  --no-mise               Bỏ qua bước cài đặt Mise và Node.js
+  --node-version <VER>    Phiên bản Node.js cần cài qua mise (Mặc định: lts)
   -f, --force             Ghi đè/xoá nếu Container ID đã tồn tại trước đó
   -h, --help              Hiển thị hướng dẫn này
 
 Ví dụ:
   $(basename "$0") --ssh-key /tmp/id_ed25519.pub
   $(basename "$0") -i 9000 -s local-lvm --force -k /root/.ssh/id_ed25519.pub
+  $(basename "$0") --force --node-version 22
 
 EOF
 }
@@ -127,6 +132,14 @@ while [[ $# -gt 0 ]]; do
         --no-docker)
             INSTALL_DOCKER=0
             shift
+            ;;
+        --no-mise)
+            INSTALL_MISE=0
+            shift
+            ;;
+        --node-version)
+            NODE_VERSION="$2"
+            shift 2
             ;;
         -f|--force)
             FORCE=1
@@ -254,6 +267,7 @@ printf "%-20s : %s GB (%s)\n" "Rootfs Storage" "$DISK_SIZE" "$STORAGE"
 printf "%-20s : %s (DHCP, Firewall: on)\n" "Network" "$BRIDGE"
 printf "%-20s : %s\n" "Features" "nesting=1,keyctl=1 (Docker ready)"
 printf "%-20s : %s\n" "Cài sẵn Docker CE" "$([[ $INSTALL_DOCKER -eq 1 ]] && echo 'CÓ (Docker CE + Compose)' || echo 'KHÔNG')"
+printf "%-20s : %s\n" "Cài sẵn Mise & Node" "$([[ $INSTALL_MISE -eq 1 ]] && echo "CÓ (Node.js ${NODE_VERSION} + pnpm + yarn)" || echo 'KHÔNG')"
 if [[ ${#SSH_KEY_ARG[@]} -gt 0 ]]; then
 printf "%-20s : %s\n" "SSH Key Injected" "${SSH_KEY_ARG[1]}"
 else
@@ -280,9 +294,14 @@ pct create "$CT_ID" "$FULL_TMPL_SPEC" \
 
 log_success "Khởi tạo LXC container ${CT_ID} thành công."
 
-# --- Step 2: Install Docker inside Container (if enabled) ---
-if [[ "$INSTALL_DOCKER" -eq 1 ]]; then
-    log_info "2. Khởi động container ${CT_ID} để cài đặt Docker CE..."
+# --- Step 2: Provision Software inside Container (if enabled) ---
+NEED_START=0
+if [[ "$INSTALL_DOCKER" -eq 1 || "$INSTALL_MISE" -eq 1 ]]; then
+    NEED_START=1
+fi
+
+if [[ "$NEED_START" -eq 1 ]]; then
+    log_info "2. Khởi động container ${CT_ID} để cấu hình phần mềm..."
     pct start "$CT_ID"
 
     log_info "Đang đợi container có kết nối mạng Internet qua DHCP..."
@@ -302,7 +321,7 @@ if [[ "$INSTALL_DOCKER" -eq 1 ]]; then
     fi
     log_success "Kết nối Internet của container đã sẵn sàng."
 
-    log_info "Đang cài đặt Docker CE và Docker Compose Plugin từ official Docker APT repository..."
+    log_info "Cập nhật APT và cài đặt các gói phụ trợ cơ bản (curl, wget, git, ca-certificates, sudo)..."
     pct exec "$CT_ID" -- bash -c '
         set -euo pipefail
         export DEBIAN_FRONTEND=noninteractive
@@ -314,61 +333,164 @@ if [[ "$INSTALL_DOCKER" -eq 1 ]]; then
         apt-get install -y --no-install-recommends \
             ca-certificates \
             curl \
+            wget \
+            git \
             gnupg \
             lsb-release \
             sudo
 
-        echo "[CT] Thêm kho lưu trữ chính thức của Docker..."
-        install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-        chmod a+r /etc/apt/keyrings/docker.asc
-
-        ARCH="$(dpkg --print-architecture)"
-        CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
-        echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian ${CODENAME} stable" > /etc/apt/sources.list.d/docker.list
-
-        echo "[CT] Cài đặt Docker CE, CLI, Containerd và Docker Compose plugin..."
-        apt-get update -y
-        apt-get install -y --no-install-recommends \
-            docker-ce \
-            docker-ce-cli \
-            containerd.io \
-            docker-buildx-plugin \
-            docker-compose-plugin
-
-        echo "[CT] Kích hoạt và kiểm tra Docker service..."
-        systemctl enable docker
-        systemctl start docker
-
         echo "[CT] Cấu hình Console Autologin cho tài khoản root..."
         mkdir -p /etc/systemd/system/container-getty@.service.d
-        cat << 'AUTOLOGIN_EOF' > /etc/systemd/system/container-getty@.service.d/override.conf
+        cat << "AUTOLOGIN_EOF" > /etc/systemd/system/container-getty@.service.d/override.conf
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin root --noclear --keep-baud tty%I 115200,38400,9600 \$TERM
+ExecStart=-/sbin/agetty --autologin root --noclear --keep-baud tty%I 115200,38400,9600 $TERM
 AUTOLOGIN_EOF
 
         mkdir -p /etc/systemd/system/console-getty.service.d
-        cat << 'AUTOLOGIN_EOF' > /etc/systemd/system/console-getty.service.d/override.conf
+        cat << "AUTOLOGIN_EOF" > /etc/systemd/system/console-getty.service.d/override.conf
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin root --noclear --keep-baud console 115200,38400,9600 \$TERM
+ExecStart=-/sbin/agetty --autologin root --noclear --keep-baud console 115200,38400,9600 $TERM
 AUTOLOGIN_EOF
 
         mkdir -p /etc/systemd/system/getty@tty1.service.d
-        cat << 'AUTOLOGIN_EOF' > /etc/systemd/system/getty@tty1.service.d/override.conf
+        cat << "AUTOLOGIN_EOF" > /etc/systemd/system/getty@tty1.service.d/override.conf
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin root --noclear %I \$TERM
+ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM
 AUTOLOGIN_EOF
 
         systemctl daemon-reload
     '
 
-    log_info "Kiểm tra phiên bản Docker trong container:"
-    pct exec "$CT_ID" -- docker --version
-    pct exec "$CT_ID" -- docker compose version
-    log_success "Docker CE đã được cài đặt và cấu hình thành công!"
+    # --- Step 2.1: Install Docker CE (if enabled) ---
+    if [[ "$INSTALL_DOCKER" -eq 1 ]]; then
+        log_info "Đang cài đặt Docker CE và Docker Compose Plugin từ official Docker APT repository..."
+        pct exec "$CT_ID" -- bash -c '
+            set -euo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+
+            echo "[CT] Thêm kho lưu trữ chính thức của Docker..."
+            install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+            chmod a+r /etc/apt/keyrings/docker.asc
+
+            ARCH="$(dpkg --print-architecture)"
+            CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+            echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian ${CODENAME} stable" > /etc/apt/sources.list.d/docker.list
+
+            echo "[CT] Cài đặt Docker CE, CLI, Containerd và Docker Compose plugin..."
+            apt-get update -y
+            apt-get install -y --no-install-recommends \
+                docker-ce \
+                docker-ce-cli \
+                containerd.io \
+                docker-buildx-plugin \
+                docker-compose-plugin
+
+            echo "[CT] Kích hoạt và kiểm tra Docker service..."
+            systemctl enable docker
+            systemctl start docker
+        '
+
+        log_info "Kiểm tra phiên bản Docker trong container:"
+        pct exec "$CT_ID" -- docker --version
+        pct exec "$CT_ID" -- docker compose version
+        log_success "Docker CE đã được cài đặt và cấu hình thành công!"
+    fi
+
+    # --- Step 2.2: Install Mise & Node.js (if enabled) ---
+    if [[ "$INSTALL_MISE" -eq 1 ]]; then
+        log_info "Đang cài đặt Mise qua kho lưu trữ APT chính thức và thiết lập Node.js (${NODE_VERSION})..."
+        pct exec "$CT_ID" -- bash -c '
+            set -euo pipefail
+            NODE_VER="$1"
+            export DEBIAN_FRONTEND=noninteractive
+
+            echo "[CT] Thêm kho lưu trữ chính thức của Mise..."
+            install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://mise.jdx.dev/gpg-key.pub | gpg --dearmor -o /etc/apt/keyrings/mise-archive-keyring.gpg
+            chmod a+r /etc/apt/keyrings/mise-archive-keyring.gpg
+
+            ARCH="$(dpkg --print-architecture)"
+            echo "deb [signed-by=/etc/apt/keyrings/mise-archive-keyring.gpg arch=${ARCH}] https://mise.jdx.dev/deb stable main" > /etc/apt/sources.list.d/mise.list
+
+            apt-get update -y
+            apt-get install -y --no-install-recommends mise
+
+            echo "[CT] Cài đặt Node.js (${NODE_VER}) qua Mise..."
+            export MISE_DATA_DIR="/root/.local/share/mise"
+            export MISE_CONFIG_DIR="/root/.config/mise"
+            export MISE_CACHE_DIR="/root/.cache/mise"
+
+            # Cài đặt Node phiên bản chỉ định và đặt làm global default
+            mise use -g "node@${NODE_VER}"
+
+            # Kích hoạt Corepack (pnpm & yarn)
+            echo "[CT] Kích hoạt Corepack (pnpm & yarn)..."
+            export PATH="/root/.local/share/mise/shims:$PATH"
+            corepack enable || true
+            corepack enable pnpm yarn || true
+            mise reshim || true
+
+            # Warm up pnpm và yarn qua Corepack để tải sẵn binary vào template
+            pnpm --version >/dev/null 2>&1 || true
+            yarn --version >/dev/null 2>&1 || true
+
+            # Tạo symlinks vào /usr/bin và /usr/local/bin để đảm bảo gọi trực tiếp mọi nơi (script, non-interactive SSH, pct exec)
+            for tool in node npm npx corepack pnpm yarn; do
+                if [[ -e "/root/.local/share/mise/shims/${tool}" ]]; then
+                    ln -sf "/root/.local/share/mise/shims/${tool}" "/usr/local/bin/${tool}"
+                    ln -sf "/root/.local/share/mise/shims/${tool}" "/usr/bin/${tool}"
+                fi
+            done
+
+            echo "[CT] Cấu hình môi trường Shell toàn hệ thống và cho root..."
+            # 1. /etc/environment (cho SSH non-interactive & PAM login)
+            if grep -q "PATH=" /etc/environment 2>/dev/null; then
+                if ! grep -q "/root/.local/share/mise/shims" /etc/environment; then
+                    sed -i "s|PATH=\"|PATH=\"/root/.local/share/mise/shims:|" /etc/environment
+                fi
+            else
+                echo "PATH=\"/root/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\"" >> /etc/environment
+            fi
+
+            # 2. /etc/profile.d/mise.sh (cho mọi interactive login shell)
+            cat << "PROFILE_EOF" > /etc/profile.d/mise.sh
+if [ -d "/root/.local/share/mise/shims" ]; then
+    case ":$PATH:" in
+        *:/root/.local/share/mise/shims:*) ;;
+        *) export PATH="/root/.local/share/mise/shims:$PATH" ;;
+    esac
+fi
+if command -v mise >/dev/null 2>&1; then
+    eval "$(mise activate bash)"
+fi
+PROFILE_EOF
+            chmod +x /etc/profile.d/mise.sh
+
+            # 3. /root/.bashrc (cho root interactive shell)
+            if ! grep -q "mise activate bash" /root/.bashrc 2>/dev/null; then
+                cat << "BASHRC_EOF" >> /root/.bashrc
+
+# Mise polyglot tool version manager
+export PATH="/root/.local/share/mise/shims:$PATH"
+if command -v mise >/dev/null 2>&1; then
+    eval "$(mise activate bash)"
+fi
+BASHRC_EOF
+            fi
+        ' _ "$NODE_VERSION"
+
+        log_info "Kiểm tra phiên bản Mise & Node.js trong container:"
+        pct exec "$CT_ID" -- mise --version
+        pct exec "$CT_ID" -- node -v
+        pct exec "$CT_ID" -- npm -v
+        pct exec "$CT_ID" -- pnpm -v
+        pct exec "$CT_ID" -- yarn -v
+        log_success "Mise và Node.js (${NODE_VERSION}) đã được cài đặt và cấu hình thành công!"
+    fi
 
     # --- Step 3: Golden Template Sanitization ---
     log_info "3. Tiến hành dọn dẹp và chuẩn hoá (Sanitize) container trước khi đóng gói template..."
@@ -376,7 +498,10 @@ AUTOLOGIN_EOF
         set -euo pipefail
 
         echo "[CT] Dừng Docker daemon trước khi dọn dẹp..."
-        systemctl stop docker || true
+        systemctl stop docker 2>/dev/null || true
+
+        echo "[CT] Dọn dẹp cache của mise và npm..."
+        rm -rf /root/.cache/mise /root/.npm/_cacache
 
         echo "[CT] Dọn dẹp APT cache và file tạm..."
         apt-get clean
@@ -413,10 +538,12 @@ echo -e "${GREEN}==============================================================$
 printf "%-20s : %s\n" "Template ID" "$CT_ID"
 printf "%-20s : %s\n" "Template Name" "$HOSTNAME"
 printf "%-20s : %s Cores | %s MB RAM | %s GB Disk\n" "Specs" "$CORES" "$MEMORY" "$DISK_SIZE"
-printf "%-20s : %s\n" "Docker CE" "Pre-installed & Ready"
+printf "%-20s : %s\n" "Docker CE" "$([[ $INSTALL_DOCKER -eq 1 ]] && echo 'Pre-installed & Ready' || echo 'Not installed')"
+printf "%-20s : %s\n" "Mise & Node.js" "$([[ $INSTALL_MISE -eq 1 ]] && echo "Node.js ${NODE_VERSION} + pnpm + yarn" || echo 'Not installed')"
 echo -e "${GREEN}--------------------------------------------------------------${NC}"
 echo -e "Bạn có thể kiểm tra trên Proxmox Web GUI hoặc dùng lệnh clone:"
 echo -e "  ${YELLOW}pct clone ${CT_ID} <NEW_ID> --hostname my-app --full 1${NC}"
 echo -e "  ${YELLOW}pct start <NEW_ID>${NC}"
 echo -e "  ${YELLOW}pct exec <NEW_ID> -- docker ps${NC}"
+echo -e "  ${YELLOW}pct exec <NEW_ID> -- node -v${NC}"
 echo ""
