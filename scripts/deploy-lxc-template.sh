@@ -80,27 +80,27 @@ print_usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Script chạy từ máy Mac để tự động triển khai LXC Template Debian 12 (Docker & Mise/Node Ready) trên Proxmox VE.
+Automated deployment script executed from a Mac/workstation to provision a Debian 12 LXC Golden Template (Docker CE & Node/Mise ready) on Proxmox VE.
 
 Options:
-  -h, --host <IP|HOST>     Địa chỉ IP Proxmox VE (Mặc định từ credentials.env: ${PVE_IP})
-  -u, --user <USER>        Tài khoản SSH Proxmox (Mặc định: root)
-  -p, --port <PORT>        Cổng SSH Proxmox (Mặc định: 22)
-  -i, --id <ID>            Container ID cần tạo (Mặc định: 9000)
-  -n, --hostname <NAME>    Tên/Hostname template (Mặc định: lxc-debian)
-  -c, --cores <NUM>        Số vCPU cores (Mặc định: 2)
-  -m, --memory <MB>        Dung lượng RAM MB (Mặc định: 2048)
-  -d, --disk <GB>          Dung lượng ổ đĩa GB (Mặc định: 15)
-  -s, --storage <STORAGE>  Storage pool cho rootfs (Mặc định: ${PVE_STORAGE})
-  -b, --bridge <BRIDGE>    Bridge mạng (Mặc định: ${PVE_BRIDGE})
-  -k, --ssh-key <PATH>     Đường dẫn SSH public key của Mac (Mặc định: ${SSH_KEY_FILE})
-  --no-docker              Bỏ qua bước cài đặt Docker CE
-  --no-mise                Bỏ qua bước cài đặt Mise và Node.js
-  --node-version <VER>     Phiên bản Node.js cần cài qua mise (Mặc định: lts)
-  -f, --force              Ghi đè/xoá nếu CT ID đã tồn tại
-  --help                   Hiển thị hướng dẫn này
+  -h, --host <IP|HOST>     Proxmox VE IP / Hostname (Default from credentials.env: ${PVE_IP})
+  -u, --user <USER>        SSH user for Proxmox VE (Default: root)
+  -p, --port <PORT>        SSH port for Proxmox VE (Default: 22)
+  -i, --id <ID>            Target Container ID (Default: 9000)
+  -n, --hostname <NAME>    Template hostname (Default: lxc-debian)
+  -c, --cores <NUM>        Number of vCPU cores (Default: 2)
+  -m, --memory <MB>        Memory allocation in MB (Default: 2048)
+  -d, --disk <GB>          Rootfs disk size in GB (Default: 15)
+  -s, --storage <STORAGE>  Target storage pool for rootfs (Default: ${PVE_STORAGE})
+  -b, --bridge <BRIDGE>    Network bridge (Default: ${PVE_BRIDGE})
+  -k, --ssh-key <PATH>     Path to local SSH public key (Default: ${SSH_KEY_FILE})
+  --no-docker              Skip Docker CE installation
+  --no-mise                Skip Mise and Node.js toolchain installation
+  --node-version <VER>     Node.js version to install via Mise (Default: lts)
+  -f, --force              Overwrite / destroy existing CT ID if present
+  --help                   Display this help message and exit
 
-Ví dụ:
+Examples:
   ./$(basename "$0") --force
   ./$(basename "$0") --force -i 9000 --hostname lxc-debian
   ./$(basename "$0") --force --node-version 22
@@ -177,7 +177,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            log_error "Tùy chọn không hợp lệ: $1"
+            log_error "Invalid option: $1"
             print_usage
             exit 1
             ;;
@@ -186,13 +186,13 @@ done
 
 # --- Validations ---
 if [[ -z "$SSH_KEY_FILE" || ! -f "$SSH_KEY_FILE" ]]; then
-    log_error "Không tìm thấy SSH Public Key tại '${SSH_KEY_FILE}'. Hãy kiểm tra lại ~/.ssh/ hoặc dùng cờ -k <path>."
+    log_error "SSH Public Key not found at '${SSH_KEY_FILE}'. Please verify ~/.ssh/ or supply a key using -k <path>."
     exit 1
 fi
 
 REMOTE_SCRIPT="${SCRIPT_DIR}/create-lxc-template.sh"
 if [[ ! -f "$REMOTE_SCRIPT" ]]; then
-    log_error "Không tìm thấy file ${REMOTE_SCRIPT}!"
+    log_error "Required script not found at ${REMOTE_SCRIPT}!"
     exit 1
 fi
 
@@ -201,31 +201,31 @@ REMOTE_TMP_DIR="/tmp/pve-template-deploy-$$"
 
 echo ""
 echo -e "${CYAN}==============================================================${NC}"
-echo -e "${CYAN}   TRIỂN KHAI LXC TEMPLATE (DOCKER & NODE/MISE) TỪ MÁY MAC   ${NC}"
+echo -e "${CYAN}    DEPLOY DEBIAN 12 LXC TEMPLATE (DOCKER & MISE/NODE)        ${NC}"
 echo -e "${CYAN}==============================================================${NC}"
 printf "%-22s : %s\n" "Proxmox Host" "${PVE_USER}@${PVE_IP}:${PVE_SSH_PORT}"
 printf "%-22s : %s (%s)\n" "Template ID / Name" "$CT_ID" "$HOSTNAME"
-printf "%-22s : %s vCPU | %s MB RAM | %s GB Disk\n" "Cấu hình" "$CORES" "$MEMORY" "$DISK_SIZE"
-printf "%-22s : %s\n" "Mac SSH Public Key" "$SSH_KEY_FILE"
+printf "%-22s : %s vCPU | %s MB RAM | %s GB Disk\n" "Hardware Profile" "$CORES" "$MEMORY" "$DISK_SIZE"
+printf "%-22s : %s\n" "Local SSH Public Key" "$SSH_KEY_FILE"
 printf "%-22s : %s\n" "Target Storage" "$PVE_STORAGE"
 printf "%-22s : %s\n" "Network Bridge" "$PVE_BRIDGE"
-printf "%-22s : %s\n" "Cài sẵn Docker CE" "$([[ $INSTALL_DOCKER -eq 1 ]] && echo 'CÓ (Docker CE + Compose)' || echo 'KHÔNG')"
-printf "%-22s : %s\n" "Cài sẵn Mise & Node" "$([[ $INSTALL_MISE -eq 1 ]] && echo "CÓ (Node.js ${NODE_VERSION} + pnpm + yarn)" || echo 'KHÔNG')"
-printf "%-22s : %s\n" "Ghi đè nếu có (--force)" "$([[ $FORCE -eq 1 ]] && echo 'CÓ' || echo 'KHÔNG')"
+printf "%-22s : %s\n" "Install Docker CE" "$([[ $INSTALL_DOCKER -eq 1 ]] && echo 'YES (Docker CE + Compose Plugin)' || echo 'NO')"
+printf "%-22s : %s\n" "Install Mise & Node" "$([[ $INSTALL_MISE -eq 1 ]] && echo "YES (Node.js ${NODE_VERSION} + pnpm + yarn)" || echo 'NO')"
+printf "%-22s : %s\n" "Force Overwrite" "$([[ $FORCE -eq 1 ]] && echo 'YES' || echo 'NO')"
 echo -e "${CYAN}==============================================================${NC}"
 echo ""
 
 # --- Step 1: Transfer Script & SSH Key to Proxmox ---
-log_info "1. Đang tạo thư mục tạm và copy script + SSH key lên Proxmox (${PVE_IP})..."
+log_info "1. Creating remote temporary directory and uploading scripts to Proxmox (${PVE_IP})..."
 
 ssh -p "$PVE_SSH_PORT" -o BatchMode=no -o ConnectTimeout=10 "${PVE_USER}@${PVE_IP}" "mkdir -p '${REMOTE_TMP_DIR}'"
 
 scp -P "$PVE_SSH_PORT" "$REMOTE_SCRIPT" "$SSH_KEY_FILE" "${PVE_USER}@${PVE_IP}:${REMOTE_TMP_DIR}/"
 
-log_success "Đã chuyển thành công các file lên ${REMOTE_TMP_DIR} trên Proxmox."
+log_success "Successfully uploaded provisioning scripts and public key to ${REMOTE_TMP_DIR} on Proxmox."
 
 # --- Step 2: Execute create-lxc-template.sh on Proxmox ---
-log_info "2. Đang khởi chạy quá trình tạo template trực tiếp trên Proxmox..."
+log_info "2. Launching LXC template creation on Proxmox VE host..."
 
 EXTRA_ARGS=""
 if [[ "$FORCE" -eq 1 ]]; then
@@ -254,7 +254,7 @@ ssh -p "$PVE_SSH_PORT" "${PVE_USER}@${PVE_IP}" \
         ${EXTRA_ARGS}"
 
 # --- Step 3: Cleanup ---
-log_info "3. Dọn dẹp các file tạm trên Proxmox..."
+log_info "3. Cleaning up temporary files on Proxmox host..."
 ssh -p "$PVE_SSH_PORT" "${PVE_USER}@${PVE_IP}" "rm -rf '${REMOTE_TMP_DIR}'" 2>/dev/null || true
 
-log_success "Hoàn tất toàn bộ quy trình triển khai LXC Template (${CT_ID} - ${HOSTNAME})!"
+log_success "LXC Template deployment completed successfully (${CT_ID} - ${HOSTNAME})!"

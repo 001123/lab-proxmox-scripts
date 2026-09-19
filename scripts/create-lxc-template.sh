@@ -54,27 +54,27 @@ print_usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Tự động tạo LXC Container Template Debian 12 tích hợp Docker CE, Mise & Node.js LTS trên Proxmox VE.
+Automated provisioning script to create a Debian 12 LXC Golden Template pre-configured with Docker CE, Mise, and Node.js LTS on Proxmox VE.
 
 Options:
-  -i, --id <ID>           Container ID (Mặc định: 9000)
-  -s, --storage <NAME>    Storage pool cho Rootfs (Mặc định: local-lvm)
-  -t, --template <FILE>   Tên file template tar.zst (Mặc định: debian-12-standard_12.12-1_amd64.tar.zst)
-  --tmpl-storage <NAME>   Storage lưu trữ file template (Mặc định: local)
-  -k, --ssh-key <PATH>    Đường dẫn tới file SSH Public Key cần chèn vào root
-  -b, --bridge <NAME>     Linux Network Bridge (Mặc định: vmbr0)
-  -c, --cores <NUM>       Số CPU Cores (Mặc định: 2)
-  -m, --memory <MB>       Dung lượng RAM MB (Mặc định: 2048)
-  --swap <MB>             Dung lượng Swap MB (Mặc định: 1024)
-  -d, --disk <GB>         Dung lượng ổ đĩa GB (Mặc định: 15)
-  -n, --hostname <NAME>   Hostname cho container (Mặc định: lxc-debian)
-  --no-docker             Bỏ qua bước cài đặt Docker CE
-  --no-mise               Bỏ qua bước cài đặt Mise và Node.js
-  --node-version <VER>    Phiên bản Node.js cần cài qua mise (Mặc định: lts)
-  -f, --force             Ghi đè/xoá nếu Container ID đã tồn tại trước đó
-  -h, --help              Hiển thị hướng dẫn này
+  -i, --id <ID>           Container ID (Default: 9000)
+  -s, --storage <NAME>    Storage pool for rootfs (Default: local-lvm)
+  -t, --template <FILE>   Template tar.zst filename (Default: debian-12-standard_12.12-1_amd64.tar.zst)
+  --tmpl-storage <NAME>   Storage pool hosting the template file (Default: local)
+  -k, --ssh-key <PATH>    Path to SSH public key to inject into root
+  -b, --bridge <NAME>     Linux Network Bridge (Default: vmbr0)
+  -c, --cores <NUM>       Number of CPU cores (Default: 2)
+  -m, --memory <MB>       RAM size in MB (Default: 2048)
+  --swap <MB>             Swap size in MB (Default: 1024)
+  -d, --disk <GB>         Disk size in GB (Default: 15)
+  -n, --hostname <NAME>   Container hostname (Default: lxc-debian)
+  --no-docker             Skip Docker CE installation
+  --no-mise               Skip Mise and Node.js toolchain installation
+  --node-version <VER>    Node.js version to install via Mise (Default: lts)
+  -f, --force             Overwrite / destroy existing Container ID if present
+  -h, --help              Display this help message and exit
 
-Ví dụ:
+Examples:
   $(basename "$0") --ssh-key /tmp/id_ed25519.pub
   $(basename "$0") -i 9000 -s local-lvm --force -k /root/.ssh/id_ed25519.pub
   $(basename "$0") --force --node-version 22
@@ -150,7 +150,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            log_error "Tùy chọn không hợp lệ: $1"
+            log_error "Invalid option: $1"
             print_usage
             exit 1
             ;;
@@ -158,37 +158,37 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Prerequisites Validation ---
-log_info "=== Khởi động tạo LXC Container Template Debian 12 (Docker Ready) ==="
+log_info "=== Initializing Debian 12 LXC Container Template (Docker & Node Ready) ==="
 
 # 1. Check Root Privileges
 if [[ "${EUID}" -ne 0 ]]; then
-    log_error "Script này cần quyền root để thực thi các lệnh pct/pvesm trên Proxmox VE."
+    log_error "This script requires root privileges to execute pct/pvesm on Proxmox VE."
     exit 1
 fi
 
 # 2. Check Proxmox CLI tools
 for cmd in pct pvesm; do
     if ! command -v "$cmd" &>/dev/null; then
-        log_error "Lệnh '$cmd' không tồn tại. Hãy đảm bảo bạn đang chạy script này trực tiếp trên Proxmox VE host."
+        log_error "Command '$cmd' not found. Ensure this script runs directly on a Proxmox VE host."
         exit 1
     fi
 done
 
 # 3. Check Target Storage
-log_info "Kiểm tra storage lưu trữ Rootfs: '${STORAGE}'..."
+log_info "Verifying rootfs storage pool: '${STORAGE}'..."
 if ! pvesm status --storage "$STORAGE" &>/dev/null; then
-    log_error "Storage '${STORAGE}' không tồn tại hoặc không khả dụng trên node này."
-    log_info "Các storage hiện có:"
+    log_error "Storage pool '${STORAGE}' does not exist or is inactive on this node."
+    log_info "Available storage pools:"
     pvesm status
     exit 1
 fi
-log_success "Storage '${STORAGE}' sẵn sàng."
+log_success "Storage pool '${STORAGE}' is ready."
 
 # 4. Check Template File
 FULL_TMPL_SPEC="${TMPL_STORAGE}:vztmpl/${TMPL_FILE}"
 TMPL_LOCAL_PATH="/var/lib/vz/template/cache/${TMPL_FILE}"
 
-log_info "Kiểm tra template base OS: ${FULL_TMPL_SPEC}..."
+log_info "Verifying base OS template: ${FULL_TMPL_SPEC}..."
 
 TEMPLATE_FOUND=0
 if [[ -f "$TMPL_LOCAL_PATH" ]]; then
@@ -198,56 +198,56 @@ elif pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | grep -q "$TMPL_FI
 fi
 
 if [[ "$TEMPLATE_FOUND" -eq 0 ]]; then
-    log_warn "Không tìm thấy template '${TMPL_FILE}' trong storage '${TMPL_STORAGE}'."
-    log_info "Đang kiểm tra kho template có sẵn trên hệ thống qua pveam..."
+    log_warn "Base template '${TMPL_FILE}' not found in storage '${TMPL_STORAGE}'."
+    log_info "Checking available appliances repository via pveam..."
     
     if command -v pveam &>/dev/null; then
         pveam update || true
-        log_info "Đang thử tải '${TMPL_FILE}' vào storage '${TMPL_STORAGE}'..."
+        log_info "Attempting to download '${TMPL_FILE}' to storage '${TMPL_STORAGE}'..."
         if pveam download "$TMPL_STORAGE" "$TMPL_FILE"; then
-            log_success "Đã tải thành công template: ${TMPL_FILE}"
+            log_success "Successfully downloaded template: ${TMPL_FILE}"
         else
-            log_error "Không thể tự động tải template '${TMPL_FILE}'. Vui lòng kiểm tra lại file trong /var/lib/vz/template/cache/."
+            log_error "Failed to automatically download template '${TMPL_FILE}'. Please verify cache in /var/lib/vz/template/cache/."
             exit 1
         fi
     else
-        log_error "Vui lòng đặt file '${TMPL_FILE}' vào thư mục cache của Proxmox (/var/lib/vz/template/cache/)."
+        log_error "Please place '${TMPL_FILE}' in Proxmox template cache directory (/var/lib/vz/template/cache/)."
         exit 1
     fi
 else
-    log_success "Đã xác nhận template file: ${FULL_TMPL_SPEC}"
+    log_success "Verified base template file: ${FULL_TMPL_SPEC}"
 fi
 
 # 5. Check SSH Key
 SSH_KEY_ARG=()
 if [[ -n "$SSH_KEY_FILE" ]]; then
     if [[ -f "$SSH_KEY_FILE" ]]; then
-        log_info "Sử dụng SSH Public Key từ: ${SSH_KEY_FILE}"
+        log_info "Using SSH Public Key from: ${SSH_KEY_FILE}"
         SSH_KEY_ARG=("--ssh-public-keys" "$SSH_KEY_FILE")
     else
-        log_error "File SSH Key '${SSH_KEY_FILE}' không tồn tại!"
+        log_error "SSH Key file '${SSH_KEY_FILE}' not found!"
         exit 1
     fi
 else
     # Check default host keys as fallback
     if [[ -f "/root/.ssh/authorized_keys" ]]; then
-        log_info "Không chỉ định --ssh-key, tự động dùng /root/.ssh/authorized_keys của host Proxmox."
+        log_info "No --ssh-key specified, automatically using host /root/.ssh/authorized_keys."
         SSH_KEY_ARG=("--ssh-public-keys" "/root/.ssh/authorized_keys")
     else
-        log_warn "Không tìm thấy SSH key nào. Container sẽ không được gắn sẵn SSH key."
+        log_warn "No SSH key found. Container will not have a pre-configured SSH key."
     fi
 fi
 
 # 6. Check Container ID Conflict / Cleanup
 if pct status "$CT_ID" &>/dev/null || [[ -f "/etc/pve/lxc/${CT_ID}.conf" ]]; then
     if [[ "$FORCE" -eq 1 ]]; then
-        log_warn "Container / Template ID ${CT_ID} đã tồn tại. Đang tiến hành dừng và xoá sạch (--force được kích hoạt)..."
+        log_warn "Container / Template ID ${CT_ID} already exists. Stopping and purging (--force enabled)..."
         pct stop "$CT_ID" 2>/dev/null || true
         pct destroy "$CT_ID" --purge 1 --force 1 --destroy-unreferenced-disks 1
-        log_success "Đã xoá hoàn toàn container / template cũ: ${CT_ID}"
+        log_success "Purged previous container / template: ${CT_ID}"
     else
-        log_error "Container / Template ID ${CT_ID} đã tồn tại!"
-        log_info "Gợi ý: Chọn ID khác qua cờ '-i <ID>' hoặc thêm cờ '-f / --force' để ghi đè."
+        log_error "Container / Template ID ${CT_ID} already exists!"
+        log_info "Suggestion: Specify another ID with '-i <ID>' or pass '-f / --force' to overwrite."
         exit 1
     fi
 fi
@@ -255,7 +255,7 @@ fi
 # --- Print Plan Summary ---
 echo ""
 echo -e "${CYAN}--------------------------------------------------${NC}"
-echo -e "${CYAN}             THÔNG SỐ LXC TEMPLATE                ${NC}"
+echo -e "${CYAN}           LXC TEMPLATE CONFIGURATION             ${NC}"
 echo -e "${CYAN}--------------------------------------------------${NC}"
 printf "%-20s : %s\n" "Container ID" "$CT_ID"
 printf "%-20s : %s\n" "Hostname" "$HOSTNAME"
@@ -266,8 +266,8 @@ printf "%-20s : %s MB\n" "Swap" "$SWAP"
 printf "%-20s : %s GB (%s)\n" "Rootfs Storage" "$DISK_SIZE" "$STORAGE"
 printf "%-20s : %s (DHCP, Firewall: on)\n" "Network" "$BRIDGE"
 printf "%-20s : %s\n" "Features" "nesting=1,keyctl=1 (Docker ready)"
-printf "%-20s : %s\n" "Cài sẵn Docker CE" "$([[ $INSTALL_DOCKER -eq 1 ]] && echo 'CÓ (Docker CE + Compose)' || echo 'KHÔNG')"
-printf "%-20s : %s\n" "Cài sẵn Mise & Node" "$([[ $INSTALL_MISE -eq 1 ]] && echo "CÓ (Node.js ${NODE_VERSION} + pnpm + yarn)" || echo 'KHÔNG')"
+printf "%-20s : %s\n" "Install Docker CE" "$([[ $INSTALL_DOCKER -eq 1 ]] && echo 'YES (Docker CE + Compose Plugin)' || echo 'NO')"
+printf "%-20s : %s\n" "Install Mise & Node" "$([[ $INSTALL_MISE -eq 1 ]] && echo "YES (Node.js ${NODE_VERSION} + pnpm + yarn)" || echo 'NO')"
 if [[ ${#SSH_KEY_ARG[@]} -gt 0 ]]; then
 printf "%-20s : %s\n" "SSH Key Injected" "${SSH_KEY_ARG[1]}"
 else
@@ -277,7 +277,7 @@ echo -e "${CYAN}--------------------------------------------------${NC}"
 echo ""
 
 # --- Step 1: Create LXC Container ---
-log_info "1. Đang tạo LXC container ID: ${CT_ID}..."
+log_info "1. Creating LXC container ID: ${CT_ID}..."
 
 pct create "$CT_ID" "$FULL_TMPL_SPEC" \
     --cores "$CORES" \
@@ -292,7 +292,7 @@ pct create "$CT_ID" "$FULL_TMPL_SPEC" \
     --start 0 \
     "${SSH_KEY_ARG[@]}"
 
-log_success "Khởi tạo LXC container ${CT_ID} thành công."
+log_success "LXC container ${CT_ID} created successfully."
 
 # --- Step 2: Provision Software inside Container (if enabled) ---
 NEED_START=0
@@ -301,10 +301,10 @@ if [[ "$INSTALL_DOCKER" -eq 1 || "$INSTALL_MISE" -eq 1 ]]; then
 fi
 
 if [[ "$NEED_START" -eq 1 ]]; then
-    log_info "2. Khởi động container ${CT_ID} để cấu hình phần mềm..."
+    log_info "2. Starting container ${CT_ID} for software provisioning..."
     pct start "$CT_ID"
 
-    log_info "Đang đợi container có kết nối mạng Internet qua DHCP..."
+    log_info "Waiting for container internet connectivity via DHCP..."
     NET_READY=0
     for i in $(seq 1 30); do
         if pct exec "$CT_ID" -- ping -c 1 -W 2 1.1.1.1 &>/dev/null; then
@@ -315,21 +315,21 @@ if [[ "$NEED_START" -eq 1 ]]; then
     done
 
     if [[ "$NET_READY" -eq 0 ]]; then
-        log_error "Container ${CT_ID} không thể kết nối Internet sau 30 giây. Vui lòng kiểm tra lại bridge '${BRIDGE}' và DHCP server."
+        log_error "Container ${CT_ID} has no internet connectivity after 30 seconds. Verify bridge '${BRIDGE}' and DHCP server."
         pct stop "$CT_ID" 2>/dev/null || true
         exit 1
     fi
-    log_success "Kết nối Internet của container đã sẵn sàng."
+    log_success "Container internet connectivity is operational."
 
-    log_info "Cập nhật APT và cài đặt các gói phụ trợ cơ bản (curl, wget, git, ca-certificates, sudo)..."
+    log_info "Updating APT and installing essential utilities (curl, wget, git, ca-certificates, sudo)..."
     pct exec "$CT_ID" -- bash -c '
         set -euo pipefail
         export DEBIAN_FRONTEND=noninteractive
 
-        echo "[CT] Cập nhật danh sách gói APT..."
+        echo "[CT] Updating APT package index..."
         apt-get update -y
 
-        echo "[CT] Cài đặt các gói phụ trợ cần thiết..."
+        echo "[CT] Installing core utilities..."
         apt-get install -y --no-install-recommends \
             ca-certificates \
             curl \
@@ -339,7 +339,7 @@ if [[ "$NEED_START" -eq 1 ]]; then
             lsb-release \
             sudo
 
-        echo "[CT] Cấu hình Console Autologin cho tài khoản root..."
+        echo "[CT] Configuring Console Autologin for root user..."
         mkdir -p /etc/systemd/system/container-getty@.service.d
         cat << "AUTOLOGIN_EOF" > /etc/systemd/system/container-getty@.service.d/override.conf
 [Service]
@@ -366,12 +366,12 @@ AUTOLOGIN_EOF
 
     # --- Step 2.1: Install Docker CE (if enabled) ---
     if [[ "$INSTALL_DOCKER" -eq 1 ]]; then
-        log_info "Đang cài đặt Docker CE và Docker Compose Plugin từ official Docker APT repository..."
+        log_info "Installing Docker CE and Docker Compose Plugin from official Docker APT repository..."
         pct exec "$CT_ID" -- bash -c '
             set -euo pipefail
             export DEBIAN_FRONTEND=noninteractive
 
-            echo "[CT] Thêm kho lưu trữ chính thức của Docker..."
+            echo "[CT] Adding official Docker APT repository..."
             install -m 0755 -d /etc/apt/keyrings
             curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
             chmod a+r /etc/apt/keyrings/docker.asc
@@ -380,7 +380,7 @@ AUTOLOGIN_EOF
             CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
             echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian ${CODENAME} stable" > /etc/apt/sources.list.d/docker.list
 
-            echo "[CT] Cài đặt Docker CE, CLI, Containerd và Docker Compose plugin..."
+            echo "[CT] Installing Docker CE, CLI, Containerd, and Compose plugins..."
             apt-get update -y
             apt-get install -y --no-install-recommends \
                 docker-ce \
@@ -389,26 +389,26 @@ AUTOLOGIN_EOF
                 docker-buildx-plugin \
                 docker-compose-plugin
 
-            echo "[CT] Kích hoạt và kiểm tra Docker service..."
+            echo "[CT] Enabling and starting Docker daemon..."
             systemctl enable docker
             systemctl start docker
         '
 
-        log_info "Kiểm tra phiên bản Docker trong container:"
+        log_info "Verifying Docker installation in container:"
         pct exec "$CT_ID" -- docker --version
         pct exec "$CT_ID" -- docker compose version
-        log_success "Docker CE đã được cài đặt và cấu hình thành công!"
+        log_success "Docker CE successfully installed and running!"
     fi
 
     # --- Step 2.2: Install Mise & Node.js (if enabled) ---
     if [[ "$INSTALL_MISE" -eq 1 ]]; then
-        log_info "Đang cài đặt Mise qua kho lưu trữ APT chính thức và thiết lập Node.js (${NODE_VERSION})..."
+        log_info "Installing Mise via official APT repository and setting up Node.js (${NODE_VERSION})..."
         pct exec "$CT_ID" -- bash -c '
             set -euo pipefail
             NODE_VER="$1"
             export DEBIAN_FRONTEND=noninteractive
 
-            echo "[CT] Thêm kho lưu trữ chính thức của Mise..."
+            echo "[CT] Adding official Mise APT repository..."
             install -m 0755 -d /etc/apt/keyrings
             curl -fsSL https://mise.jdx.dev/gpg-key.pub | gpg --dearmor -o /etc/apt/keyrings/mise-archive-keyring.gpg
             chmod a+r /etc/apt/keyrings/mise-archive-keyring.gpg
@@ -419,26 +419,26 @@ AUTOLOGIN_EOF
             apt-get update -y
             apt-get install -y --no-install-recommends mise
 
-            echo "[CT] Cài đặt Node.js (${NODE_VER}) qua Mise..."
+            echo "[CT] Installing Node.js (${NODE_VER}) via Mise..."
             export MISE_DATA_DIR="/root/.local/share/mise"
             export MISE_CONFIG_DIR="/root/.config/mise"
             export MISE_CACHE_DIR="/root/.cache/mise"
 
-            # Cài đặt Node phiên bản chỉ định và đặt làm global default
+            # Install specified Node version and configure as global default
             mise use -g "node@${NODE_VER}"
 
-            # Kích hoạt Corepack (pnpm & yarn)
-            echo "[CT] Kích hoạt Corepack (pnpm & yarn)..."
+            # Enable Corepack (pnpm & yarn)
+            echo "[CT] Enabling Corepack (pnpm & yarn)..."
             export PATH="/root/.local/share/mise/shims:$PATH"
             corepack enable || true
             corepack enable pnpm yarn || true
             mise reshim || true
 
-            # Warm up pnpm và yarn qua Corepack để tải sẵn binary vào template
+            # Warm up pnpm and yarn through Corepack to pre-fetch binaries into template
             pnpm --version >/dev/null 2>&1 || true
             yarn --version >/dev/null 2>&1 || true
 
-            # Tạo symlinks vào /usr/bin và /usr/local/bin để đảm bảo gọi trực tiếp mọi nơi (script, non-interactive SSH, pct exec)
+            # Create symlinks in /usr/bin and /usr/local/bin for immediate non-interactive/SSH access
             for tool in node npm npx corepack pnpm yarn; do
                 if [[ -e "/root/.local/share/mise/shims/${tool}" ]]; then
                     ln -sf "/root/.local/share/mise/shims/${tool}" "/usr/local/bin/${tool}"
@@ -446,8 +446,8 @@ AUTOLOGIN_EOF
                 fi
             done
 
-            echo "[CT] Cấu hình môi trường Shell toàn hệ thống và cho root..."
-            # 1. /etc/environment (cho SSH non-interactive & PAM login)
+            echo "[CT] Configuring system-wide and root shell environments..."
+            # 1. /etc/environment (for SSH non-interactive & PAM login)
             if grep -q "PATH=" /etc/environment 2>/dev/null; then
                 if ! grep -q "/root/.local/share/mise/shims" /etc/environment; then
                     sed -i "s|PATH=\"|PATH=\"/root/.local/share/mise/shims:|" /etc/environment
@@ -456,7 +456,7 @@ AUTOLOGIN_EOF
                 echo "PATH=\"/root/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\"" >> /etc/environment
             fi
 
-            # 2. /etc/profile.d/mise.sh (cho mọi interactive login shell)
+            # 2. /etc/profile.d/mise.sh (for interactive login shells)
             cat << "PROFILE_EOF" > /etc/profile.d/mise.sh
 if [ -d "/root/.local/share/mise/shims" ]; then
     case ":$PATH:" in
@@ -470,7 +470,7 @@ fi
 PROFILE_EOF
             chmod +x /etc/profile.d/mise.sh
 
-            # 3. /root/.bashrc (cho root interactive shell)
+            # 3. /root/.bashrc (for root interactive shell)
             if ! grep -q "mise activate bash" /root/.bashrc 2>/dev/null; then
                 cat << "BASHRC_EOF" >> /root/.bashrc
 
@@ -483,65 +483,65 @@ BASHRC_EOF
             fi
         ' _ "$NODE_VERSION"
 
-        log_info "Kiểm tra phiên bản Mise & Node.js trong container:"
+        log_info "Verifying Mise & Node.js environment in container:"
         pct exec "$CT_ID" -- mise --version
         pct exec "$CT_ID" -- node -v
         pct exec "$CT_ID" -- npm -v
         pct exec "$CT_ID" -- pnpm -v
         pct exec "$CT_ID" -- yarn -v
-        log_success "Mise và Node.js (${NODE_VERSION}) đã được cài đặt và cấu hình thành công!"
+        log_success "Mise and Node.js (${NODE_VERSION}) installed and configured successfully!"
     fi
 
     # --- Step 3: Golden Template Sanitization ---
-    log_info "3. Tiến hành dọn dẹp và chuẩn hoá (Sanitize) container trước khi đóng gói template..."
+    log_info "3. Sanitizing container before creating golden template..."
     pct exec "$CT_ID" -- bash -c '
         set -euo pipefail
 
-        echo "[CT] Dừng Docker daemon trước khi dọn dẹp..."
+        echo "[CT] Stopping Docker daemon before sanitization..."
         systemctl stop docker 2>/dev/null || true
 
-        echo "[CT] Dọn dẹp cache của mise và npm..."
+        echo "[CT] Purging Mise and NPM caches..."
         rm -rf /root/.cache/mise /root/.npm/_cacache
 
-        echo "[CT] Dọn dẹp APT cache và file tạm..."
+        echo "[CT] Purging APT cache and temporary files..."
         apt-get clean
         rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-        echo "[CT] Reset /etc/machine-id để đảm bảo DHCP IP độc lập khi clone..."
+        echo "[CT] Resetting /etc/machine-id to prevent DHCP conflicts across clones..."
         truncate -s 0 /etc/machine-id
         rm -f /var/lib/dbus/machine-id
         ln -sf /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true
 
-        echo "[CT] Xoá lịch sử lệnh..."
+        echo "[CT] Purging shell command history..."
         cat /dev/null > /root/.bash_history 2>/dev/null || true
         history -c 2>/dev/null || true
 
-        echo "[CT] Làm sạch log files..."
+        echo "[CT] Truncating system log files..."
         find /var/log -type f -name "*.log" -exec truncate -s 0 {} + 2>/dev/null || true
     '
-    log_success "Đã hoàn tất dọn dẹp sạch sẽ container."
+    log_success "Container sanitization completed successfully."
 
-    log_info "Đang tắt container ${CT_ID}..."
+    log_info "Stopping container ${CT_ID}..."
     pct stop "$CT_ID"
     sleep 2
 fi
 
 # --- Step 4: Convert LXC to Template ---
-log_info "4. Đang chuyển đổi container ${CT_ID} thành Proxmox Template..."
+log_info "4. Converting container ${CT_ID} to Proxmox VE template..."
 pct template "$CT_ID"
-log_success "Đã chuyển đổi thành công Container ${CT_ID} thành Template!"
+log_success "Successfully converted Container ${CT_ID} to Template!"
 
 echo ""
 echo -e "${GREEN}==============================================================${NC}"
-echo -e "${GREEN}      TẠO LXC CONTAINER TEMPLATE THÀNH CÔNG! (${CT_ID})       ${NC}"
+echo -e "${GREEN}    LXC CONTAINER TEMPLATE CREATED SUCCESSFULLY! (${CT_ID})     ${NC}"
 echo -e "${GREEN}==============================================================${NC}"
 printf "%-20s : %s\n" "Template ID" "$CT_ID"
 printf "%-20s : %s\n" "Template Name" "$HOSTNAME"
-printf "%-20s : %s Cores | %s MB RAM | %s GB Disk\n" "Specs" "$CORES" "$MEMORY" "$DISK_SIZE"
+printf "%-20s : %s Cores | %s MB RAM | %s GB Disk\n" "Hardware Profile" "$CORES" "$MEMORY" "$DISK_SIZE"
 printf "%-20s : %s\n" "Docker CE" "$([[ $INSTALL_DOCKER -eq 1 ]] && echo 'Pre-installed & Ready' || echo 'Not installed')"
 printf "%-20s : %s\n" "Mise & Node.js" "$([[ $INSTALL_MISE -eq 1 ]] && echo "Node.js ${NODE_VERSION} + pnpm + yarn" || echo 'Not installed')"
 echo -e "${GREEN}--------------------------------------------------------------${NC}"
-echo -e "Bạn có thể kiểm tra trên Proxmox Web GUI hoặc dùng lệnh clone:"
+echo -e "You can manage the template via Proxmox Web GUI or clone it via CLI:"
 echo -e "  ${YELLOW}pct clone ${CT_ID} <NEW_ID> --hostname my-app --full 1${NC}"
 echo -e "  ${YELLOW}pct start <NEW_ID>${NC}"
 echo -e "  ${YELLOW}pct exec <NEW_ID> -- docker ps${NC}"
