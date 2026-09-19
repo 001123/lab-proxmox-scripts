@@ -1,0 +1,93 @@
+# ==============================================================================
+# Environment & Secrets (CRITICAL)
+# ==============================================================================
+# Ignore all environment credential files containing secrets
+*.env
+*.env.*
+.env*.local
+credentials.env
+
+# Whitelist template / example configuration files
+!*.env.example
+!credentials.env.example
+
+# ==============================================================================
+# Keys, Certificates & Credentials
+# ==============================================================================
+*.pem
+*.key
+*.pub
+id_rsa*
+id_ed25519*
+*.p12
+*.pfx
+*.crt
+*.csr
+*.cer
+*.ovpn
+
+# ==============================================================================
+# Proxmox / Virtualization Big Artifacts & Backups
+# ==============================================================================
+# OS Images, Container Templates, ISOs, Dumps & Disks
+*.iso
+*.img
+*.qcow2
+*.vmdk
+*.raw
+*.vma
+*.vma.gz
+*.vma.zst
+*.tar.zst
+*.tar.gz
+*.tar.xz
+vztmpl/
+dump/
+backups/
+
+# ==============================================================================
+# Logs & Temporary Files
+# ==============================================================================
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+tmp/
+logs/
+
+# ==============================================================================
+# Operating System Files
+# ==============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+
+# ==============================================================================
+# IDEs & Code Editors
+# ==============================================================================
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.sublime-workspace
+*.sublime-project
+.project
+.settings/
