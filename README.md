@@ -102,3 +102,9 @@ Vì SSH Public Key (`id_ed25519.pub`) của máy Mac đã được tích hợp s
 ```bash
 ssh root@<IP_CONTAINER_MOI>
 ```
+
+---
+
+## Giấy phép (License)
+
+Dự án được phân phối theo giấy phép [MIT License](LICENSE).
